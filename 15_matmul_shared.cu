@@ -22,6 +22,7 @@ __global__ void matmul(float *A, float *B, float *C, int N) {
 
 int main(int argc, char **argv) {
   int N = 2048;
+  int M = 256;
   int size = N * N * sizeof(float);
   float *A, *B, *C;
   cudaMallocManaged(&A, size);
