@@ -10,28 +10,53 @@ __global__ void kernel(int dim_m, int dim_n, int dim_k,
 		       float *d_a, float *d_b, float *d_c) {
   int offset_a_m = 64 * blockIdx.x;
   int offset_b_n = 64 * blockIdx.y;
-  int m = threadIdx.x;
+  int a_m = threadIdx.x % 8 * 8;
+  int a_k = threadIdx.x / 8;
+  int b_k = 0;
+  int b_n = threadIdx.x;
 
-  float block_c[64];
+  struct __align__(16) vec_t { float d[8]; };
+  __shared__ float __align__(16) block_a[8][64];
+  __shared__ float __align__(16) block_b[8][64];
+  float block_c[8][8];
 
-  for (int n = 0; n < 64; ++n)
-    block_c[n] = 0;
+  vec_t *tile_a = reinterpret_cast<vec_t*>(&d_a[a_k * dim_m + (offset_a_m + a_m)]);
+  vec_t *tile_b = reinterpret_cast<vec_t*>(&d_b[(offset_b_n + b_n) * dim_k + b_k]);
+  for (int m = 0; m < 8; ++m)
+    for (int n = 0; n < 8; ++n)
+      block_c[m][n] = 0;
 
+  int offset_n = threadIdx.x / 8 * 8;
+  int offset_m = threadIdx.x % 8 * 8;
+  int offset_a_k = 0;
+  int offset_b_k = 0;
   for (int k = 0; k < dim_k; k += 8) {
-    int offset_a_k = k, offset_b_k = k;
+    vec_t thread_a = tile_a[offset_a_k];
+    vec_t thread_b = tile_b[offset_b_k];
+    __syncthreads();
     for (int j = 0; j < 8; ++j) {
-      float block_a = d_a[(offset_a_k + j) * dim_m + offset_a_m + m];
-      for (int n = 0; n < 64; ++n) {
-        float block_b = d_b[(offset_b_n + n) * dim_k + offset_b_k + j];
-	block_c[n] += block_a * block_b;
+      block_a[a_k][a_m + j] = thread_a.d[j];
+      block_b[b_k + j][b_n] = thread_b.d[j];
+    }
+    __syncthreads();
+    offset_a_k += dim_m;
+    offset_b_k++;
+#pragma unroll
+    for (int j = 0; j < 8; ++j) {
+      for (int m = 0; m < 8; ++m) {
+	for (int n = 0; n < 8; ++n) {
+	  block_c[m][n] += block_a[j][offset_m + m] * block_b[j][offset_n + n];
+	}
       }
     }
   }
-  for (int n = 0; n < 64; ++n) {
-    int c_n = offset_b_n + n;
-    int c_m = offset_a_m + m;
-    if (c_n < dim_n && c_m < dim_m) {
-      d_c[c_n * dim_m + c_m] = block_c[n];
+  for (int m = 0; m < 8; ++m) {
+    for (int n = 0; n < 8; ++n) {
+      int c_n = offset_b_n + offset_n + n;
+      int c_m = offset_a_m + offset_m + m;
+      if (c_n < dim_n && c_m < dim_m) {
+	d_c[c_n * dim_m + c_m] = block_c[m][n];
+      }
     }
   }
 }

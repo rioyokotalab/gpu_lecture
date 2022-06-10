@@ -10,8 +10,11 @@ __global__ void kernel(int dim_m, int dim_n, int dim_k,
 		       float *d_a, float *d_b, float *d_c) {
   int offset_a_m = 64 * blockIdx.x;
   int offset_b_n = 64 * blockIdx.y;
+  int i = threadIdx.x;
   int m = threadIdx.x;
 
+  __shared__ float block_a[8][64];
+  __shared__ float block_b[8][64];
   float block_c[64];
 
   for (int n = 0; n < 64; ++n)
@@ -19,11 +22,16 @@ __global__ void kernel(int dim_m, int dim_n, int dim_k,
 
   for (int k = 0; k < dim_k; k += 8) {
     int offset_a_k = k, offset_b_k = k;
+    __syncthreads();
     for (int j = 0; j < 8; ++j) {
-      float block_a = d_a[(offset_a_k + j) * dim_m + offset_a_m + m];
+      block_a[j][i] = d_a[(offset_a_k + j) * dim_m + offset_a_m + i];
+      block_b[j][i] = d_b[(offset_b_n + i) * dim_k + offset_b_k + j];
+    }
+    __syncthreads();
+#pragma unroll
+    for (int j = 0; j < 8; ++j) {
       for (int n = 0; n < 64; ++n) {
-        float block_b = d_b[(offset_b_n + n) * dim_k + offset_b_k + j];
-	block_c[n] += block_a * block_b;
+	block_c[n] += block_a[j][m] * block_b[j][n];
       }
     }
   }
